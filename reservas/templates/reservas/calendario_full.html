@@ -464,7 +464,8 @@
                         return;
                     }
                     const texto = `Reserva creada (${data.reservas.length}). Total: $${data.total}. ` +
-                        (data.pagado ? `Pagado con la tarjeta terminada en ${data.tarjeta}.` : 'Pago pendiente en el lugar.');
+                        (data.pagado ? `Pagado con la tarjeta terminada en ${data.tarjeta}.` : 'Pago pendiente en el lugar.') +
+                        (data.correo_enviado ? ' Te enviamos la confirmación por correo.' : '');
                     cerrarModal();
                     if (metodo === 'card' && pago.save_card) {
                         // Se recarga para que la tarjeta recién guardada aparezca como opción
