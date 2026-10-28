@@ -6,7 +6,7 @@ El proyecto usa Django 5.2, Python, SQLite, plantillas HTML renderizadas por el 
 
 Se actualizo la rama `qa` con `origin/main` (commit `9ae2b0e`), que incorpora H1-H5: pagos guardados y reserva rapida, calendario dinamico, pronostico de demanda, mis reservas/cancelaciones y correo de confirmacion. Las historias adicionales se interpretan ahora como H4 Mis reservas y H5 Correo de confirmacion, conforme al codigo actualizado.
 
-La suite automatizada de `reservas/tests.py` valida integraciones entre vistas, API, modelos, correo y base de datos. **Ultima ejecucion:** `python manage.py test reservas` con **29 pruebas aprobadas**; `python manage.py check` paso y `python manage.py makemigrations --check --dry-run` reporto que no hay migraciones pendientes. No se ha ejecutado E2E real en navegador; los componentes CDN (FullCalendar/Chart.js) requieren comprobacion manual o una suite browser aparte.
+La suite automatizada de `reservas/tests.py` valida integraciones entre vistas, API, modelos, correo y base de datos. **Ultima ejecucion:** `python manage.py test reservas` con **36 pruebas aprobadas**; `python manage.py check` paso y `python manage.py makemigrations --check --dry-run` reporto que no hay migraciones pendientes. No se ha ejecutado E2E real en navegador; los componentes CDN (FullCalendar/Chart.js) requieren comprobacion manual o una suite browser aparte.
 
 ## 2. Criterios de aceptacion y escenarios Gherkin
 
@@ -48,7 +48,7 @@ Caracteristica: Reserva rapida de un usuario recurrente
     Y no crea ninguna reserva
 ```
 
-**Cobertura automatizada:** metodo guardado, reserva sin metodo guardado, tarjeta invalida y comprobacion de que solo se almacena titular/ultimos cuatro digitos. La automatizacion de interaccion modal en navegador queda pendiente.
+**Cobertura automatizada:** metodo guardado, eliminacion del metodo, reserva sin metodo guardado, tarjeta invalida y comprobacion de que solo se almacena titular/ultimos cuatro digitos. La automatizacion de interaccion modal en navegador queda pendiente.
 
 ### HU-02 - Calendario dinamico de disponibilidad
 
@@ -117,7 +117,7 @@ Caracteristica: Prevision de demanda del administrador
     Y no presenta valores inventados como una prevision valida
 ```
 
-**Cobertura automatizada:** permisos del panel/API, render del panel, forma de la respuesta y longitudes de series. El render de los graficos Chart.js y el cambio de recurso requieren E2E/manual en navegador.
+**Cobertura automatizada:** permisos del panel/API, render del panel, forma de la respuesta, longitudes de series, media movil y sugerencia de precio exactamente en los umbrales de 50% y 15%. El render de los graficos Chart.js y el cambio de recurso requieren E2E/manual en navegador.
 
 ## 3. Historias adicionales
 
@@ -167,7 +167,7 @@ Caracteristica: Enviar confirmacion de reserva
     Y el sistema registra que no pudo enviar la confirmacion
 ```
 
-**Cobertura automatizada de H4/H5:** visualizacion de reservas propias, aislamiento de propietario, cancelacion autorizada/no autorizada y composicion/envio de correo en backend de pruebas.
+**Cobertura automatizada de H4/H5:** visualizacion de reservas propias, aislamiento de propietario, cancelacion autorizada/no autorizada, rechazo al cancelar reservas pasadas o ya canceladas, correo unico para una serie recurrente, usuario sin correo y composicion/envio de correo en backend de pruebas.
 
 ## 4. Estrategia de automatizacion y casos de integracion
 
@@ -230,10 +230,10 @@ Para cada ejemplo que se presente como “respuesta incorrecta de IA” o “cam
 
 | HU | Criterios / escenarios | Validacion ejecutada | Evidencia para presentacion | Estado |
 |---|---|---|---|---|
-| HU-01 Reserva rapida con pago guardado | Seleccion/uso de metodo guardado, rechazo sin metodo, persistencia segura | Pruebas API y modelo: metodo guardado, ausente, tarjeta invalida; reserva y correo | JSON API, fila Booking/PaymentMethod sin PAN/CVV, resultado de test | Backend aprobado; E2E modal pendiente |
+| HU-01 Reserva rapida con pago guardado | Seleccion/uso y eliminacion del metodo guardado, rechazo sin metodo, persistencia segura | Pruebas API y modelo: metodo guardado, eliminacion, ausente, tarjeta invalida; reserva y correo | JSON API, fila Booking/PaymentMethod sin PAN/CVV, resultado de test | Backend aprobado; E2E modal pendiente |
 | HU-02 Calendario dinamico | Estados del dia, ocupacion/bloqueos, rangos invalidos y rechazo server-side | API de disponibilidad parcial/ocupada y conflicto con reserva/bloqueo | JSON con `estado/libres`, request de rechazo, captura del calendario | Logica backend aprobada; E2E visual/refresco pendiente |
-| HU-03 Pronostico de demanda | Permisos, historico 12 semanas, forecast 4 semanas, recurso sin historial | Acceso staff/no staff, forma de JSON, valores vacios, media movil | JSON esperado, rol, panel HTML/captura del grafico | API/panel backend aprobado; render Chart.js pendiente en navegador |
-| HU-04 Mis reservas | Aislamiento por usuario, cancelacion propia, prohibir cancelar de otro, liberar franja | Client de Django y comprobacion del estado en BD | Usuario, response/codigo, estado antes/despues, resultado de tests | Backend aprobado; flujo visual pendiente |
-| HU-05 Correo de confirmacion | Resumen correcto, correo sin destinatario/fallo de correo sin perder reserva | Backend de correo en pruebas y fallo simulado | Mensaje capturado, destinatario, resultado JSON y Booking persistido | Backend aprobado; entrega en entorno SMTP real pendiente |
+| HU-03 Pronostico de demanda | Permisos, historico 12 semanas, forecast 4 semanas, recurso sin historial, umbrales 50%/15% | Acceso staff/no staff, forma de JSON, valores vacios, media movil y limites inclusivos del precio | JSON esperado, rol, resultado de sugerencia, panel HTML/captura del grafico | API/calculo/panel backend aprobado; render Chart.js pendiente en navegador |
+| HU-04 Mis reservas | Aislamiento por usuario, cancelacion propia, prohibir cancelar de otro, pasado, ya cancelada y liberar franja | Client de Django y comprobacion del estado en BD | Usuario, response/codigo, estado y fecha de cancelacion antes/despues | Backend aprobado; flujo visual pendiente |
+| HU-05 Correo de confirmacion | Resumen correcto, un correo por serie, cuenta sin correo/fallo sin perder reserva | Backend de correo en pruebas y fallo simulado | Mensaje capturado, conteo de correos, JSON y Booking persistido | Backend aprobado; entrega en entorno SMTP real pendiente |
 
 **Criterio de salida para la demo:** las cinco HU tienen cobertura backend automatizada en la version actual, pero no estan validadas completamente de extremo a extremo hasta ejecutar las comprobaciones de navegador y, para H5, verificar entrega real en el entorno acordado. Adjuntar la salida de pruebas vinculada al commit que se presente.

@@ -118,6 +118,26 @@ class CreateBookingApiTests(TestCase):
         self.assertEqual(len(response.json()['reservas']), 3)
         self.assertEqual(Booking.objects.count(), 3)
 
+    def test_recurring_booking_sends_one_confirmation_email(self):
+        response = self.post_booking(self.payload(repeat_weeks=2))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Booking.objects.count(), 3)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(response.json()['correo_enviado'], True)
+
+    def test_booking_without_user_email_does_not_send_confirmation(self):
+        self.user.email = ''
+        self.user.save(update_fields=['email'])
+
+        with self.assertLogs('reservas.correos', level='WARNING'):
+            response = self.post_booking()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Booking.objects.count(), 1)
+        self.assertFalse(response.json()['correo_enviado'])
+        self.assertEqual(len(mail.outbox), 0)
+
     def test_invalid_interval_is_rejected_without_creating_booking(self):
         response = self.post_booking(self.payload(
             end_time=self.start.isoformat(),
@@ -181,7 +201,8 @@ class CreateBookingApiTests(TestCase):
 
     @patch('reservas.correos.send_mail', side_effect=RuntimeError('mail unavailable'))
     def test_booking_persists_when_confirmation_email_fails(self, send_mail):
-        response = self.post_booking()
+        with self.assertLogs('reservas.correos', level='ERROR'):
+            response = self.post_booking()
 
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.json()['correo_enviado'])
@@ -363,6 +384,35 @@ class MyBookingsAndConfirmationTests(TestCase):
         self.assertEqual(self.booking.status, Booking.CANCELADA)
         self.assertIsNotNone(self.booking.cancelled_at)
 
+    def test_owner_cannot_cancel_booking_that_already_started(self):
+        self.booking.start_time = timezone.now() - timedelta(hours=2)
+        self.booking.end_time = timezone.now() - timedelta(hours=1)
+        self.booking.save(update_fields=['start_time', 'end_time'])
+
+        response = self.client.post(
+            reverse('cancelar_reserva', args=[self.booking.pk]),
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.booking.refresh_from_db()
+        self.assertEqual(self.booking.status, Booking.CONFIRMADA)
+        self.assertIsNone(self.booking.cancelled_at)
+
+    def test_owner_cannot_cancel_booking_twice(self):
+        self.booking.status = Booking.CANCELADA
+        self.booking.cancelled_at = timezone.now() - timedelta(minutes=5)
+        original_cancelled_at = self.booking.cancelled_at
+        self.booking.save(update_fields=['status', 'cancelled_at'])
+
+        response = self.client.post(
+            reverse('cancelar_reserva', args=[self.booking.pk]),
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.booking.refresh_from_db()
+        self.assertEqual(self.booking.status, Booking.CANCELADA)
+        self.assertEqual(self.booking.cancelled_at, original_cancelled_at)
+
     def test_cancelled_booking_frees_slot_for_a_new_booking(self):
         self.client.post(reverse('cancelar_reserva', args=[self.booking.pk]))
         response = self.client.post(
@@ -431,9 +481,41 @@ class PaymentMethodPageTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertFalse(PaymentMethod.objects.filter(user=self.user).exists())
 
+    def test_user_can_delete_saved_payment_method(self):
+        PaymentMethod.objects.create(
+            user=self.user,
+            holder='QA Cardholder',
+            last4='4242',
+        )
+
+        response = self.client.post(self.url, {'accion': 'eliminar'})
+
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(PaymentMethod.objects.filter(user=self.user).exists())
+
 
 class DemandForecastCalculationTests(TestCase):
     def test_moving_average_projects_from_previous_forecast(self):
         from .demanda import media_movil
 
         self.assertEqual(media_movil([3, 6, 9], semanas_futuras=2), [6.0, 7.0])
+
+    def test_price_suggestion_uses_high_occupancy_threshold_inclusively(self):
+        from decimal import Decimal
+
+        from .demanda import sugerencia_precio
+
+        result = sugerencia_precio(Decimal('20.00'), 0.50)
+
+        self.assertEqual(result['accion'], 'subir')
+        self.assertEqual(result['precio_sugerido'], '22.00')
+
+    def test_price_suggestion_uses_low_occupancy_threshold_inclusively(self):
+        from decimal import Decimal
+
+        from .demanda import sugerencia_precio
+
+        result = sugerencia_precio(Decimal('20.00'), 0.15)
+
+        self.assertEqual(result['accion'], 'bajar')
+        self.assertEqual(result['precio_sugerido'], '18.00')
