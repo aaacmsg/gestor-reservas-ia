@@ -155,6 +155,8 @@ def api_crear_reserva(request):
 
     if start_time is None or end_time is None:
         return JsonResponse({'success': False, 'error': 'Fechas de reserva no válidas.'}, status=400)
+    if end_time <= start_time:
+        return JsonResponse({'success': False, 'error': 'El intervalo de fechas no es válido.'}, status=400)
     resource = Resource.objects.filter(id=resource_id).first()
     if resource is None:
         return JsonResponse({'success': False, 'error': 'El recurso no existe.'}, status=404)
@@ -408,5 +410,3 @@ def home(request):
     """
     resources = Resource.objects.all()  # Obtenemos todas las pistas
     return render(request, 'reservas/home.html', {'resources': resources})
-
-

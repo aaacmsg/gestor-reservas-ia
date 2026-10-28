@@ -22,6 +22,7 @@ Registro del uso de la IA durante el desarrollo de las historias H1 a H5. Solo s
 | Diseño H4 | Claude Code | Cómo cancelar sin perder historial | Estado `cancelada` en vez de borrar. La restricción única pasa a valer solo para reservas confirmadas | Aceptada |
 | Código H4 | Claude Code | Excluir las canceladas de todas las consultas | Método `activas()` usado en las consultas de solapamiento, disponibilidad, calendario, API y demanda. Se probó volver a reservar una franja cancelada | Aceptada |
 | Código H5 | Claude Code | Correo de confirmación sin romper la reserva si falla | Probado con bandeja en memoria, SMTP caído y usuario sin correo | Aceptada |
+| Revisión de QA | QA del proyecto | Revisar el resultado de las 29 pruebas y validar intervalos inválidos en `api_crear_reserva` | Se detectó que `fin <= inicio` terminaba como conflicto HTTP 409 al pasar por `motivo_no_disponible`, aunque es un dato inválido | Aceptada: se añadió una validación explícita antes de consultar el recurso; la API responde HTTP 400 y una prueba de regresión verifica que no se cree la reserva |
 
 ## Ejemplos de respuestas incorrectas de la IA
 
