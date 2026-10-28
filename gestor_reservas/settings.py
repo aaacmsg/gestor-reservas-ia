@@ -119,6 +119,12 @@ STATIC_URL = "static/"
 # Página a la que se manda a quien entra a una vista que pide sesión
 LOGIN_URL = "/login/"
 
+# Correo: en desarrollo los mensajes se imprimen en la consola del servidor.
+# Para enviar correos reales se cambia el backend por django.core.mail.backends.smtp.EmailBackend
+# y se agregan EMAIL_HOST, EMAIL_PORT, EMAIL_HOST_USER y EMAIL_HOST_PASSWORD.
+EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+DEFAULT_FROM_EMAIL = "Gestor de Reservas <no-reply@gestor-reservas.local>"
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 

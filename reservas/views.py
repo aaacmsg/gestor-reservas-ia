@@ -18,6 +18,7 @@ from django.core.exceptions import PermissionDenied
 from .models import Resource, Booking, Availability, PaymentMethod
 from .disponibilidad import estado_dias, motivo_no_disponible
 from .pagos import precio_reserva, validar_tarjeta
+from .correos import enviar_confirmacion
 from .demanda import AJUSTE_PRECIO, UMBRAL_ALTO, UMBRAL_BAJO, VENTANA_MEDIA_MOVIL, datos_demanda
 
 
@@ -215,12 +216,17 @@ def api_crear_reserva(request):
                 defaults={'holder': tarjeta['holder'], 'last4': tarjeta['last4']},
             )
 
+    # El correo se envía después de guardar: si falla, la reserva queda igual
+    total = precio * len(franjas)
+    correo_enviado = enviar_confirmacion(request.user, resource, franjas, total, last4)
+
     return JsonResponse({
         'success': True,
         'reservas': [{'start': i.isoformat(), 'end': f.isoformat()} for i, f in franjas],
-        'total': str(precio * len(franjas)),
+        'total': str(total),
         'pagado': metodo != 'later',
         'tarjeta': last4,
+        'correo_enviado': correo_enviado,
     })
 
 
