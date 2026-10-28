@@ -93,32 +93,21 @@ def calendario_full(request, resource_id):
     """
     resource = get_object_or_404(Resource, id=resource_id)
 
-    reservas = Booking.objects.filter(resource=resource).order_by('start_time')
     bloqueos = Availability.objects.filter(resource=resource)
-
-    # Lista de reservas
-    reservas_json = [
-        {
-            "start": reserva.start_time.isoformat(),
-            "end": reserva.end_time.isoformat(),
-            "title": f"Reservado por {reserva.user.username}",
-            "color": "#10b981",  # Verde reservas
-        }
-        for reserva in reservas
-    ]
 
     # Lista de bloqueos (rojo)
     bloqueos_json = [
         {
             "start": bloqueo.start_time.isoformat(),
             "end": bloqueo.end_time.isoformat(),
+            "title": "Bloqueado",
+            "extendedProps": {"tipo": "bloqueo"},
         }
         for bloqueo in bloqueos
     ]
 
     return render(request, 'reservas/calendario_full.html', {
         'resource': resource,
-        'reservas_json': json.dumps(reservas_json),
         'bloqueos_json': json.dumps(bloqueos_json),
         'is_authenticated': request.user.is_authenticated,
     })
@@ -240,7 +229,8 @@ def api_reservas(request, resource_id):
             "title": f"Reservado por {reserva.user.username}",
             "start": reserva.start_time.isoformat(),
             "end": reserva.end_time.isoformat(),
-            "color": "#10b981",  # Verde
+            "color": "#2563eb",  # Azul (el verde se usa para los días libres)
+            "extendedProps": {"tipo": "reserva"},
         }
         for reserva in reservas
     ]
