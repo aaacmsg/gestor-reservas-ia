@@ -1,5 +1,6 @@
 import json
 from datetime import datetime, timedelta, time
+from django.db import transaction
 from django.shortcuts import render, get_object_or_404, redirect
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
@@ -126,42 +127,71 @@ def api_crear_reserva(request):
             return JsonResponse({'success': False, 'error': 'Debes iniciar sesión para reservar.'}, status=403)
         try:
             data = json.loads(request.body)
-            resource_id = data.get('resource_id')
-            start_time = parse_datetime(data.get('start_time'))
-            end_time = parse_datetime(data.get('end_time'))
-            repeat_weeks = int(data.get('repeat_weeks', 0))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return JsonResponse({'success': False, 'error': 'El cuerpo debe contener JSON válido.'}, status=400)
 
-            reservas_creadas = []
+        if not isinstance(data, dict):
+            return JsonResponse({'success': False, 'error': 'El cuerpo debe ser un objeto JSON.'}, status=400)
 
-            for i in range(repeat_weeks + 1):
-                start = start_time + timedelta(weeks=i)
-                end = end_time + timedelta(weeks=i)
+        resource_id = data.get('resource_id')
+        start_value = data.get('start_time')
+        end_value = data.get('end_time')
+        repeat_weeks = data.get('repeat_weeks', 0)
 
-                overlapping = Booking.objects.filter(
-                    resource_id=resource_id,
+        if isinstance(resource_id, bool) or not str(resource_id or '').isdigit():
+            return JsonResponse({'success': False, 'error': 'El recurso indicado no es válido.'}, status=400)
+        if not isinstance(start_value, str) or not isinstance(end_value, str):
+            return JsonResponse({'success': False, 'error': 'La fecha de inicio y fin son obligatorias.'}, status=400)
+        start_time = parse_datetime(start_value)
+        end_time = parse_datetime(end_value)
+        if start_time is None or end_time is None or end_time <= start_time:
+            return JsonResponse({'success': False, 'error': 'El intervalo de fechas no es válido.'}, status=400)
+        if isinstance(repeat_weeks, bool) or not isinstance(repeat_weeks, int) or repeat_weeks < 0:
+            return JsonResponse({'success': False, 'error': 'La repetición debe ser un entero no negativo.'}, status=400)
+
+        try:
+            resource = Resource.objects.get(pk=resource_id)
+        except Resource.DoesNotExist:
+            return JsonResponse({'success': False, 'error': 'El recurso indicado no existe.'}, status=404)
+
+        occurrences = [
+            (start_time + timedelta(weeks=week), end_time + timedelta(weeks=week))
+            for week in range(repeat_weeks + 1)
+        ]
+
+        with transaction.atomic():
+            for week, (start, end) in enumerate(occurrences):
+                has_booking_conflict = Booking.objects.filter(
+                    resource=resource,
                     start_time__lt=end,
                     end_time__gt=start
-                )
-                if overlapping.exists():
+                ).exists()
+                has_block_conflict = Availability.objects.filter(
+                    resource=resource,
+                    start_time__lt=end,
+                    end_time__gt=start
+                ).exists()
+                if has_booking_conflict or has_block_conflict:
                     return JsonResponse({
                         'success': False,
-                        'error': f'Conflicto: hay una reserva en la semana {i + 1} ({start}).'
-                    })
+                        'error': f'Conflicto: el horario de la semana {week + 1} no está disponible.'
+                    }, status=409)
 
-                booking = Booking.objects.create(
+            for start, end in occurrences:
+                Booking.objects.create(
                     user=request.user,
-                    resource_id=resource_id,
+                    resource=resource,
                     start_time=start,
                     end_time=end
                 )
-                reservas_creadas.append({
-                    'start': start.isoformat(),
-                    'end': end.isoformat()
-                })
 
-            return JsonResponse({'success': True, 'reservas': reservas_creadas})
-        except Exception as e:
-            return JsonResponse({'success': False, 'error': str(e)})
+        return JsonResponse({
+            'success': True,
+            'reservas': [
+                {'start': start.isoformat(), 'end': end.isoformat()}
+                for start, end in occurrences
+            ]
+        })
     return JsonResponse({'success': False, 'error': 'Método no permitido'}, status=405)
 
 
@@ -210,5 +240,4 @@ def home(request):
     """
     resources = Resource.objects.all()  # Obtenemos todas las pistas
     return render(request, 'reservas/home.html', {'resources': resources})
-
 
