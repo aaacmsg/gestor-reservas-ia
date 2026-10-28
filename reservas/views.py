@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timedelta, time
+from datetime import date, datetime, timedelta, time
 from django.shortcuts import render, get_object_or_404, redirect
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
@@ -8,12 +8,15 @@ from django.utils.dateparse import parse_datetime
 from django.contrib.auth import authenticate, login, logout
 from django.contrib import messages
 from .models import Resource, Booking, Availability
-from .models import Resource
+from .disponibilidad import estado_dias
 
 
 # Horario por defecto (si no hay Availability definida)
 DEFAULT_START = time(9, 0)   # 09:00
 DEFAULT_END = time(21, 0)    # 21:00
+
+# Máximo de días que se pueden consultar de una sola vez en la API de disponibilidad
+MAX_DIAS_CONSULTA = 62
 
 
 def calendario(request, resource_id):
@@ -163,6 +166,27 @@ def api_crear_reserva(request):
         except Exception as e:
             return JsonResponse({'success': False, 'error': str(e)})
     return JsonResponse({'success': False, 'error': 'Método no permitido'}, status=405)
+
+
+def api_disponibilidad(request, resource_id):
+    """
+    Devuelve el estado (libre, parcial, ocupado o pasado) de cada día entre
+    los parámetros start y end (fechas ISO). Lo usa el calendario para pintar los días.
+    """
+    get_object_or_404(Resource, id=resource_id)
+    try:
+        desde = date.fromisoformat(request.GET.get('start', '')[:10])
+        hasta = date.fromisoformat(request.GET.get('end', '')[:10])
+    except ValueError:
+        return JsonResponse({'error': 'Los parámetros start y end deben ser fechas ISO.'}, status=400)
+
+    if hasta < desde or (hasta - desde).days > MAX_DIAS_CONSULTA:
+        return JsonResponse({'error': 'Rango de fechas no válido.'}, status=400)
+
+    return JsonResponse({
+        'resource_id': resource_id,
+        'dias': estado_dias(resource_id, desde, hasta),
+    })
 
 
 def login_view(request):
