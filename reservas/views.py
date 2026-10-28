@@ -44,7 +44,7 @@ def calendario(request, resource_id):
     inicio_semana = hoy - timedelta(days=hoy.weekday())  # Lunes
     dias_semana = [inicio_semana + timedelta(days=i) for i in range(7)]
 
-    reservas = Booking.objects.filter(
+    reservas = Booking.objects.activas().filter(
         resource=resource,
         start_time__date__gte=inicio_semana,
         start_time__date__lte=inicio_semana + timedelta(days=6)
@@ -78,7 +78,7 @@ def calendario_navegable(request, resource_id):
     inicio_semana = (hoy - timedelta(days=hoy.weekday())) + timedelta(days=delta)
     dias_semana = [inicio_semana + timedelta(days=i) for i in range(7)]
 
-    reservas = Booking.objects.filter(
+    reservas = Booking.objects.activas().filter(
         resource=resource,
         start_time__date__gte=inicio_semana,
         start_time__date__lte=inicio_semana + timedelta(days=6)
@@ -344,7 +344,7 @@ def api_reservas(request, resource_id):
     """
     API que devuelve todas las reservas de un recurso en formato JSON.
     """
-    reservas = Booking.objects.filter(resource_id=resource_id).order_by('start_time')
+    reservas = Booking.objects.activas().filter(resource_id=resource_id).order_by('start_time')
     eventos = [
         {
             "title": f"Reservado por {reserva.user.username}",

@@ -28,7 +28,7 @@ def hay_bloqueo(resource_id, inicio, fin):
 
 
 def hay_reserva(resource_id, inicio, fin):
-    return Booking.objects.filter(
+    return Booking.objects.activas().filter(
         resource_id=resource_id,
         start_time__lt=fin,
         end_time__gt=inicio,
@@ -63,7 +63,7 @@ def estado_dias(resource_id, desde, hasta):
     rango_fin = timezone.make_aware(datetime.combine(hasta + timedelta(days=1), time.min), zona)
 
     # Se consultan reservas y bloqueos una sola vez para todo el rango
-    reservas = list(Booking.objects.filter(
+    reservas = list(Booking.objects.activas().filter(
         resource_id=resource_id,
         start_time__lt=rango_fin,
         end_time__gt=rango_ini,
