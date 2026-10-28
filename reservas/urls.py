@@ -8,6 +8,7 @@ urlpatterns = [
     path('api/reservas/<int:resource_id>/', views.api_reservas, name='api_reservas'),
     path('api/reservas/crear/', views.api_crear_reserva, name='api_crear_reserva'),
     path('api/disponibilidad/<int:resource_id>/', views.api_disponibilidad, name='api_disponibilidad'),
+    path('cuenta/pagos/', views.mis_pagos, name='mis_pagos'),
     path('login/', views.login_view, name='login'),
     path('logout/', views.logout_view, name='logout'),
 

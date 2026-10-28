@@ -7,10 +7,13 @@ from django.db import transaction
 from django.utils import timezone
 from django.utils.dateformat import format as date_format
 from django.utils.dateparse import parse_datetime
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.contrib.auth import authenticate, login, logout
 from django.contrib import messages
-from .models import Resource, Booking, Availability
+from django.contrib.auth.decorators import login_required
+from .models import Resource, Booking, Availability, PaymentMethod
 from .disponibilidad import estado_dias, motivo_no_disponible
+from .pagos import precio_reserva, validar_tarjeta
 
 
 # Horario por defecto (si no hay Availability definida)
@@ -110,6 +113,10 @@ def calendario_full(request, resource_id):
         'resource': resource,
         'bloqueos_json': json.dumps(bloqueos_json),
         'is_authenticated': request.user.is_authenticated,
+        'metodo_guardado': (
+            PaymentMethod.objects.filter(user=request.user).first()
+            if request.user.is_authenticated else None
+        ),
     })
 
 
@@ -118,6 +125,10 @@ def api_crear_reserva(request):
     """
     Endpoint para crear una nueva reserva, con soporte para repeticiones semanales.
     Primero se valida cada semana y solo si todas están libres se crean las reservas.
+
+    El pago llega en el campo payment: {"method": "saved"} usa el método guardado,
+    {"method": "card", "card": {...}, "save_card": true} usa una tarjeta nueva y
+    {"method": "later"} deja la reserva sin pagar.
     """
     if request.method != 'POST':
         return JsonResponse({'success': False, 'error': 'Método no permitido'}, status=405)
@@ -135,7 +146,8 @@ def api_crear_reserva(request):
 
     if start_time is None or end_time is None:
         return JsonResponse({'success': False, 'error': 'Fechas de reserva no válidas.'}, status=400)
-    if not Resource.objects.filter(id=resource_id).exists():
+    resource = Resource.objects.filter(id=resource_id).first()
+    if resource is None:
         return JsonResponse({'success': False, 'error': 'El recurso no existe.'}, status=404)
     if not 0 <= repeat_weeks <= MAX_SEMANAS_REPETICION:
         return JsonResponse({
@@ -147,6 +159,23 @@ def api_crear_reserva(request):
         start_time = timezone.make_aware(start_time)
     if timezone.is_naive(end_time):
         end_time = timezone.make_aware(end_time)
+
+    pago = data.get('payment') if isinstance(data.get('payment'), dict) else {}
+    metodo = pago.get('method', 'later')
+    last4 = ''
+    tarjeta = None
+    if metodo == 'saved':
+        guardado = PaymentMethod.objects.filter(user=request.user).first()
+        if guardado is None:
+            return JsonResponse({'success': False, 'error': 'No tienes un método de pago guardado.'}, status=400)
+        last4 = guardado.last4
+    elif metodo == 'card':
+        tarjeta, error = validar_tarjeta(pago.get('card'))
+        if error:
+            return JsonResponse({'success': False, 'error': error}, status=400)
+        last4 = tarjeta['last4']
+    elif metodo != 'later':
+        return JsonResponse({'success': False, 'error': 'Método de pago no válido.'}, status=400)
 
     franjas = [
         (start_time + timedelta(weeks=i), end_time + timedelta(weeks=i))
@@ -160,18 +189,30 @@ def api_crear_reserva(request):
                 motivo = f'Semana {i + 1} ({timezone.localtime(inicio):%d/%m/%Y %H:%M}): {motivo}'
             return JsonResponse({'success': False, 'error': motivo}, status=409)
 
+    precio = precio_reserva(resource, start_time, end_time)
     with transaction.atomic():
         for inicio, fin in franjas:
             Booking.objects.create(
                 user=request.user,
-                resource_id=resource_id,
+                resource=resource,
                 start_time=inicio,
-                end_time=fin
+                end_time=fin,
+                price=precio,
+                paid=metodo != 'later',
+                payment_last4=last4,
+            )
+        if tarjeta and pago.get('save_card'):
+            PaymentMethod.objects.update_or_create(
+                user=request.user,
+                defaults={'holder': tarjeta['holder'], 'last4': tarjeta['last4']},
             )
 
     return JsonResponse({
         'success': True,
-        'reservas': [{'start': i.isoformat(), 'end': f.isoformat()} for i, f in franjas]
+        'reservas': [{'start': i.isoformat(), 'end': f.isoformat()} for i, f in franjas],
+        'total': str(precio * len(franjas)),
+        'pagado': metodo != 'later',
+        'tarjeta': last4,
     })
 
 
@@ -196,6 +237,38 @@ def api_disponibilidad(request, resource_id):
     })
 
 
+@login_required
+def mis_pagos(request):
+    """
+    Página donde el usuario guarda o elimina su método de pago.
+    Del formulario solo se guardan el titular y los últimos 4 dígitos.
+    """
+    if request.method == 'POST':
+        if request.POST.get('accion') == 'eliminar':
+            PaymentMethod.objects.filter(user=request.user).delete()
+            messages.success(request, 'Se eliminó tu método de pago guardado.')
+        else:
+            tarjeta, error = validar_tarjeta({
+                'holder': request.POST.get('holder'),
+                'number': request.POST.get('number'),
+                'expiry': request.POST.get('expiry'),
+                'cvv': request.POST.get('cvv'),
+            })
+            if error:
+                messages.error(request, error)
+            else:
+                PaymentMethod.objects.update_or_create(
+                    user=request.user,
+                    defaults={'holder': tarjeta['holder'], 'last4': tarjeta['last4']},
+                )
+                messages.success(request, 'Tu método de pago se guardó correctamente.')
+        return redirect('mis_pagos')
+
+    return render(request, 'reservas/pagos.html', {
+        'metodo': PaymentMethod.objects.filter(user=request.user).first(),
+    })
+
+
 def login_view(request):
     """
     Vista para el inicio de sesión de usuarios.
@@ -206,6 +279,9 @@ def login_view(request):
         user = authenticate(request, username=username, password=password)
         if user:
             login(request, user)
+            siguiente = request.GET.get('next', '')
+            if siguiente and url_has_allowed_host_and_scheme(siguiente, allowed_hosts={request.get_host()}):
+                return redirect(siguiente)
             return redirect('/')
         else:
             messages.error(request, "Usuario o contraseña incorrectos.")
