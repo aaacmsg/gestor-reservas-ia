@@ -1,0 +1,49 @@
+{% extends 'reservas/layout.html' %}
+
+{% block title %}Mis pagos - Gestor de Reservas{% endblock %}
+
+{% block content %}
+<h2 class="text-2xl font-bold mb-6">Mis pagos</h2>
+
+<div class="bg-white rounded-lg shadow-md p-6 mb-6">
+    <h3 class="text-lg font-semibold mb-3">Método de pago guardado</h3>
+    {% if metodo %}
+        <p class="mb-1"><strong>Titular:</strong> {{ metodo.holder }}</p>
+        <p class="mb-4"><strong>Tarjeta:</strong> **** **** **** {{ metodo.last4 }}</p>
+        <form method="post" onsubmit="return confirm('¿Eliminar tu método de pago guardado?');">
+            {% csrf_token %}
+            <input type="hidden" name="accion" value="eliminar">
+            <button type="submit" class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600">Eliminar método guardado</button>
+        </form>
+    {% else %}
+        <p class="text-gray-600">No tienes ningún método de pago guardado. Al reservar tendrás que escribir los datos de la tarjeta.</p>
+    {% endif %}
+</div>
+
+<div class="bg-white rounded-lg shadow-md p-6">
+    <h3 class="text-lg font-semibold mb-1">{% if metodo %}Cambiar método de pago{% else %}Guardar un método de pago{% endif %}</h3>
+    <p class="text-sm text-gray-600 mb-4">Solo se guardan el titular y los últimos 4 dígitos. El número completo, el vencimiento y el CVV no se guardan.</p>
+    <form method="post" autocomplete="off">
+        {% csrf_token %}
+        <label class="block mb-3">
+            <span class="text-sm font-medium">Titular</span>
+            <input type="text" name="holder" required maxlength="100" class="w-full border rounded px-3 py-2 mt-1">
+        </label>
+        <label class="block mb-3">
+            <span class="text-sm font-medium">Número de tarjeta</span>
+            <input type="text" name="number" required inputmode="numeric" placeholder="4242 4242 4242 4242" class="w-full border rounded px-3 py-2 mt-1">
+        </label>
+        <div class="flex gap-4 mb-4">
+            <label class="block flex-1">
+                <span class="text-sm font-medium">Vencimiento (MM/AA)</span>
+                <input type="text" name="expiry" required placeholder="12/30" maxlength="5" class="w-full border rounded px-3 py-2 mt-1">
+            </label>
+            <label class="block flex-1">
+                <span class="text-sm font-medium">CVV</span>
+                <input type="password" name="cvv" required inputmode="numeric" maxlength="4" class="w-full border rounded px-3 py-2 mt-1">
+            </label>
+        </div>
+        <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Guardar método de pago</button>
+    </form>
+</div>
+{% endblock %}

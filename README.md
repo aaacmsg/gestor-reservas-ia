@@ -82,3 +82,31 @@ Selecciona un bloque de tiempo disponible para hacer una reserva.
 El sistema valida solapamientos y bloqueos.
 
 Se pueden crear reservas recurrentes (pregunta cuántas semanas repetir).
+
+
+---
+
+## Feature Sprint con IA
+
+Cambios hechos sobre la aplicación original, uno por issue:
+
+| Issue | Función | Ruta |
+|---|---|---|
+| H1 | Reservar con método de pago guardado (solo titular y últimos 4 dígitos) | `/cuenta/pagos/` y ventana de reserva en el calendario |
+| H2 | Calendario con días libres, parciales y ocupados, y franjas no seleccionables | `/calendario_full/<id>/` y `/api/disponibilidad/<id>/` |
+| H3 | Panel de demanda con histórico, previsión y sugerencia de precio (solo staff) | `/panel/demanda/` |
+| H4 | Ver y cancelar mis reservas | `/mis-reservas/` |
+| H5 | Correo de confirmación al reservar | Consola del servidor en desarrollo |
+
+Después de bajar los cambios hay que correr las migraciones:
+
+    python manage.py migrate
+
+Para ver los gráficos del panel de demanda se puede cargar un historial de prueba:
+
+    python manage.py cargar_historial_demo
+
+Más información en la carpeta `docs/`:
+
+- `docs/ANALISIS.md`: análisis del proyecto antes de hacer cambios.
+- `docs/AI_DEVELOPMENT_LOG.md`: registro del uso de la IA.
