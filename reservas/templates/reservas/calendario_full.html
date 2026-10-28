@@ -117,6 +117,63 @@
         .leyenda .ocupado::before { background: #fecaca; }
         .leyenda .reserva::before { background: #2563eb; }
         .leyenda .bloqueo::before { background: #ef4444; }
+
+        /* === MODAL DE RESERVA === */
+        .modal {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+        }
+        .modal[hidden] { display: none; }
+        .modal-card {
+            background: white;
+            border-radius: 10px;
+            padding: 24px;
+            width: 100%;
+            max-width: 440px;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.25);
+        }
+        .modal-card h3 { margin-top: 0; }
+        .modal-card label { display: block; margin: 8px 0; }
+        .modal-card input[type=text],
+        .modal-card input[type=password],
+        .modal-card input[type=number] {
+            width: 100%;
+            padding: 8px;
+            margin-top: 4px;
+            box-sizing: border-box;
+            border: 1px solid #d1d5db;
+            border-radius: 5px;
+        }
+        .modal-card fieldset { border: 1px solid #e5e7eb; border-radius: 6px; margin: 12px 0; }
+        .modal-total { font-size: 1.2rem; font-weight: bold; }
+        .modal-error { color: #b91c1c; font-weight: bold; }
+        .modal-acciones { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
+        .modal-acciones button {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1rem;
+        }
+        #modal-cancelar { background: #e5e7eb; }
+        #modal-confirmar { background: #2563eb; color: white; }
+        #modal-confirmar:disabled { opacity: 0.6; cursor: wait; }
+        #aviso {
+            max-width: 1000px;
+            margin: 0 auto 15px;
+            padding: 12px;
+            background: #dcfce7;
+            color: #166534;
+            border-radius: 6px;
+            text-align: center;
+        }
     </style>
 </head>
 <body>
@@ -127,6 +184,7 @@
         </div>
         <div class="nav-right">
             {% if is_authenticated %}
+                <a href="{% url 'mis_pagos' %}">Mis pagos</a>
                 <span class="user-info">Hola, {{ user.username }}</span>
                 <a href="/logout/" class="btn-logout">Cerrar Sesión</a>
             {% else %}
@@ -146,6 +204,8 @@
     <!-- Botón para actualizar eventos -->
     <button id="btn-refresh">🔄 Actualizar Reservas</button>
     
+    <div id="aviso" hidden></div>
+
     <div class="leyenda">
         <span class="libre">Día libre</span>
         <span class="parcial">Pocas franjas libres</span>
@@ -157,7 +217,51 @@
     <!-- Contenedor del calendario con data-resource-id y user-logged -->
     <div id='calendar' 
          data-resource-id="{{ resource.id }}" 
-         data-user-logged="{{ is_authenticated }}">
+         data-user-logged="{{ is_authenticated }}"
+         data-price="{{ resource.price_per_hour|stringformat:'f' }}">
+    </div>
+
+    <!-- Ventana para confirmar la reserva y elegir cómo pagar -->
+    <div id="modal-reserva" class="modal" hidden>
+        <div class="modal-card">
+            <h3>Confirmar reserva</h3>
+            <p id="modal-resumen"></p>
+            <label>Semanas a repetir (0 = solo esta semana)
+                <input type="number" id="modal-repeat" min="0" max="12" value="0">
+            </label>
+            <p class="modal-total">Total: $<span id="modal-total">0.00</span></p>
+
+            <fieldset>
+                <legend>Pago</legend>
+                {% if metodo_guardado %}
+                <label>
+                    <input type="radio" name="pago" value="saved" checked>
+                    Mi tarjeta guardada: **** {{ metodo_guardado.last4 }} ({{ metodo_guardado.holder }})
+                </label>
+                {% endif %}
+                <label>
+                    <input type="radio" name="pago" value="card" {% if not metodo_guardado %}checked{% endif %}>
+                    Pagar con otra tarjeta
+                </label>
+                <div id="modal-tarjeta" hidden>
+                    <label>Titular <input type="text" id="card-holder" maxlength="100" autocomplete="off"></label>
+                    <label>Número de tarjeta <input type="text" id="card-number" inputmode="numeric" placeholder="4242 4242 4242 4242" autocomplete="off"></label>
+                    <label>Vencimiento (MM/AA) <input type="text" id="card-expiry" maxlength="5" placeholder="12/30" autocomplete="off"></label>
+                    <label>CVV <input type="password" id="card-cvv" maxlength="4" inputmode="numeric" autocomplete="off"></label>
+                    <label><input type="checkbox" id="card-save"> Guardar titular y últimos 4 dígitos para próximas reservas</label>
+                </div>
+                <label>
+                    <input type="radio" name="pago" value="later">
+                    Pagar en el lugar
+                </label>
+            </fieldset>
+
+            <p id="modal-error" class="modal-error" hidden></p>
+            <div class="modal-acciones">
+                <button type="button" id="modal-cancelar">Cancelar</button>
+                <button type="button" id="modal-confirmar">Reservar</button>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -226,9 +330,7 @@
                         return;
                     }
 
-                    if (confirm(`¿Quieres crear una reserva desde ${info.startStr} hasta ${info.endStr}?`)) {
-                        crearReserva(info.startStr, info.endStr);
-                    }
+                    abrirModal(info.startStr, info.endStr);
                 },
                 eventSources: [
                     // Reservas existentes
@@ -276,13 +378,66 @@
 
             calendar.render();
 
-            // === FUNCIÓN CREAR RESERVA CON REPETICIONES ===
-            function crearReserva(start, end) {
-                let repeat = prompt("¿Cuántas semanas quieres repetir esta reserva? (0 = solo esta semana)", "0");
-                if (repeat === null) return;
-                repeat = parseInt(repeat);
-                if (isNaN(repeat) || repeat < 0) repeat = 0;
+            // === VENTANA DE RESERVA ===
+            const precioHora = parseFloat(calendarElement.dataset.price);
+            const modal = document.getElementById('modal-reserva');
+            const campoRepeat = document.getElementById('modal-repeat');
+            const bloqueTarjeta = document.getElementById('modal-tarjeta');
+            const textoError = document.getElementById('modal-error');
+            const botonConfirmar = document.getElementById('modal-confirmar');
+            let franjaElegida = null;
 
+            function metodoElegido() {
+                return document.querySelector('input[name=pago]:checked').value;
+            }
+
+            function actualizarModal() {
+                const horas = (new Date(franjaElegida.end) - new Date(franjaElegida.start)) / 3600000;
+                const semanas = Math.max(0, parseInt(campoRepeat.value) || 0) + 1;
+                document.getElementById('modal-total').textContent = (horas * precioHora * semanas).toFixed(2);
+                bloqueTarjeta.hidden = metodoElegido() !== 'card';
+                botonConfirmar.textContent = metodoElegido() === 'later' ? 'Reservar' : 'Reservar y pagar';
+            }
+
+            function abrirModal(start, end) {
+                franjaElegida = { start: start, end: end };
+                const inicio = new Date(start);
+                const fin = new Date(end);
+                document.getElementById('modal-resumen').textContent =
+                    '{{ resource.name|escapejs }}: ' + inicio.toLocaleDateString('es') + ' de ' +
+                    inicio.toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' }) + ' a ' +
+                    fin.toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' });
+                campoRepeat.value = 0;
+                textoError.hidden = true;
+                actualizarModal();
+                modal.hidden = false;
+            }
+
+            function cerrarModal() {
+                modal.hidden = true;
+                ['card-number', 'card-cvv'].forEach(id => document.getElementById(id).value = '');
+            }
+
+            function mostrarAviso(texto) {
+                const aviso = document.getElementById('aviso');
+                aviso.textContent = texto;
+                aviso.hidden = false;
+            }
+
+            function enviarReserva() {
+                const metodo = metodoElegido();
+                const pago = { method: metodo };
+                if (metodo === 'card') {
+                    pago.card = {
+                        holder: document.getElementById('card-holder').value,
+                        number: document.getElementById('card-number').value,
+                        expiry: document.getElementById('card-expiry').value,
+                        cvv: document.getElementById('card-cvv').value
+                    };
+                    pago.save_card = document.getElementById('card-save').checked;
+                }
+
+                botonConfirmar.disabled = true;
                 fetch('/api/reservas/crear/', {
                     method: 'POST',
                     headers: {
@@ -291,23 +446,53 @@
                     },
                     body: JSON.stringify({
                         resource_id: resourceId,
-                        start_time: start,
-                        end_time: end,
-                        repeat_weeks: repeat
+                        start_time: franjaElegida.start,
+                        end_time: franjaElegida.end,
+                        repeat_weeks: parseInt(campoRepeat.value) || 0,
+                        payment: pago
                     })
                 })
                 .then(response => response.json())
                 .then(data => {
-                    if (data.success) {
-                        alert(`Reserva(s) creada(s) correctamente: ${data.reservas.length} reserva(s).`);
-                    } else {
-                        alert(data.error || 'Error al crear la reserva.');
+                    botonConfirmar.disabled = false;
+                    if (!data.success) {
+                        textoError.textContent = data.error || 'Error al crear la reserva.';
+                        textoError.hidden = false;
+                        calendar.refetchEvents();
+                        return;
                     }
-                    // Se recarga siempre para que los colores de los días queden al día
+                    const texto = `Reserva creada (${data.reservas.length}). Total: $${data.total}. ` +
+                        (data.pagado ? `Pagado con la tarjeta terminada en ${data.tarjeta}.` : 'Pago pendiente en el lugar.');
+                    cerrarModal();
+                    if (metodo === 'card' && pago.save_card) {
+                        // Se recarga para que la tarjeta recién guardada aparezca como opción
+                        try { sessionStorage.setItem('aviso', texto); } catch (e) {}
+                        location.reload();
+                        return;
+                    }
+                    mostrarAviso(texto);
                     calendar.refetchEvents();
                 })
-                .catch(error => console.error('Error:', error));
+                .catch(error => {
+                    botonConfirmar.disabled = false;
+                    textoError.textContent = 'No se pudo conectar con el servidor.';
+                    textoError.hidden = false;
+                    console.error('Error:', error);
+                });
             }
+
+            document.querySelectorAll('input[name=pago]').forEach(r => r.addEventListener('change', actualizarModal));
+            campoRepeat.addEventListener('input', actualizarModal);
+            document.getElementById('modal-cancelar').addEventListener('click', cerrarModal);
+            botonConfirmar.addEventListener('click', enviarReserva);
+
+            try {
+                const guardado = sessionStorage.getItem('aviso');
+                if (guardado) {
+                    mostrarAviso(guardado);
+                    sessionStorage.removeItem('aviso');
+                }
+            } catch (e) {}
 
             // Función para obtener CSRF
             function getCookie(name) {

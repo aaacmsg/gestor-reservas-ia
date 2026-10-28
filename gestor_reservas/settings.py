@@ -116,6 +116,9 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 
+# Página a la que se manda a quien entra a una vista que pide sesión
+LOGIN_URL = "/login/"
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
