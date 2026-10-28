@@ -1,0 +1,134 @@
+{% extends 'reservas/layout.html' %}
+
+{% block title %}Panel de demanda - Gestor de Reservas{% endblock %}
+{% block ancho %}max-w-5xl{% endblock %}
+
+{% block content %}
+<h2 class="text-2xl font-bold mb-2">Panel de demanda</h2>
+<p class="text-gray-600 mb-6">Histórico de reservas por recurso y previsión de las próximas {{ semanas_futuras }} semanas.</p>
+
+<div class="bg-white rounded-lg shadow-md p-6 mb-6">
+    <h3 class="text-lg font-semibold mb-2">Cómo se calcula la previsión</h3>
+    <ul class="list-disc ml-6 text-sm text-gray-700 space-y-1">
+        <li>Se cuentan las <strong>horas reservadas</strong> por semana en las últimas 12 semanas completas.</li>
+        <li>La previsión usa una <strong>media móvil de {{ ventana }} semanas</strong>: cada semana futura es el promedio de las {{ ventana }} semanas anteriores, y ese resultado se usa para calcular la siguiente.</li>
+        <li>La <strong>ocupación</strong> es el porcentaje de las 84 horas semanales disponibles (7 días de 09:00 a 21:00).</li>
+        <li>Si la ocupación prevista es de {{ umbral_alto }}% o más se sugiere subir el precio un {{ ajuste }}%. Si es de {{ umbral_bajo }}% o menos se sugiere bajarlo un {{ ajuste }}%.</li>
+        <li>Es solo una sugerencia: el precio no cambia solo, se edita desde el admin.</li>
+    </ul>
+</div>
+
+<div class="bg-white rounded-lg shadow-md p-6 mb-6">
+    <div class="flex items-center justify-between mb-4">
+        <h3 class="text-lg font-semibold">Gráficos por recurso</h3>
+        <select id="selector-recurso" class="border rounded px-3 py-2">
+            {% for recurso in recursos %}
+                <option value="{{ recurso.id }}">{{ recurso.name }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    {% if recursos %}
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div>
+            <h4 class="font-medium mb-2 text-center">Horas reservadas por semana</h4>
+            <canvas id="grafico-semanas"></canvas>
+        </div>
+        <div>
+            <h4 class="font-medium mb-2 text-center">Promedio de horas por día de la semana</h4>
+            <canvas id="grafico-dias"></canvas>
+        </div>
+    </div>
+    {% else %}
+        <p class="text-gray-500">Todavía no hay recursos creados.</p>
+    {% endif %}
+</div>
+
+<div class="bg-white rounded-lg shadow-md p-6 overflow-x-auto">
+    <h3 class="text-lg font-semibold mb-3">Sugerencias de precio e inventario</h3>
+    <table class="w-full text-sm text-left">
+        <thead>
+            <tr class="border-b">
+                <th class="py-2 pr-3">Recurso</th>
+                <th class="py-2 pr-3">Ocupación histórica</th>
+                <th class="py-2 pr-3">Ocupación prevista</th>
+                <th class="py-2 pr-3">Sugerencia</th>
+                <th class="py-2 pr-3">Precio actual</th>
+                <th class="py-2 pr-3">Precio sugerido</th>
+                <th class="py-2">Día con menos demanda</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for fila in resumen %}
+            <tr class="border-b">
+                <td class="py-2 pr-3 font-medium">{{ fila.recurso.nombre }}</td>
+                <td class="py-2 pr-3">{{ fila.ocupacion_historica }}%</td>
+                <td class="py-2 pr-3">{{ fila.ocupacion_prevista }}%</td>
+                <td class="py-2 pr-3">
+                    {% if fila.sugerencia.accion == 'subir' %}<span class="text-red-700 font-semibold">Subir precio</span>
+                    {% elif fila.sugerencia.accion == 'bajar' %}<span class="text-blue-700 font-semibold">Bajar precio</span>
+                    {% else %}<span class="text-gray-700">Mantener</span>{% endif %}
+                </td>
+                <td class="py-2 pr-3">${{ fila.sugerencia.precio_actual }}</td>
+                <td class="py-2 pr-3">${{ fila.sugerencia.precio_sugerido }}</td>
+                <td class="py-2 capitalize">{{ fila.dia_con_menos_demanda }}</td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="7" class="py-4 text-gray-500">No hay datos para mostrar.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <p class="text-xs text-gray-500 mt-3">El día con menos demanda sirve para programar mantenimiento o cerrar la pista creando un bloqueo desde el admin.</p>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const selector = document.getElementById('selector-recurso');
+        if (!selector.options.length) return;
+
+        let graficoSemanas = null;
+        let graficoDias = null;
+
+        function dibujar(datos) {
+            if (graficoSemanas) graficoSemanas.destroy();
+            if (graficoDias) graficoDias.destroy();
+
+            // Las barras del histórico y las de la previsión comparten el eje de semanas
+            const etiquetas = datos.semanas.concat(datos.semanas_futuras);
+            const vacio = datos.semanas_futuras.map(() => null);
+            graficoSemanas = new Chart(document.getElementById('grafico-semanas'), {
+                type: 'bar',
+                data: {
+                    labels: etiquetas,
+                    datasets: [
+                        { label: 'Histórico', data: datos.historico.concat(vacio), backgroundColor: '#2563eb' },
+                        { label: 'Previsión', data: datos.historico.map(() => null).concat(datos.prevision), backgroundColor: '#f59e0b' }
+                    ]
+                },
+                options: {
+                    scales: { y: { beginAtZero: true, title: { display: true, text: 'Horas' } },
+                              x: { title: { display: true, text: 'Semana (lunes)' } } }
+                }
+            });
+
+            graficoDias = new Chart(document.getElementById('grafico-dias'), {
+                type: 'bar',
+                data: {
+                    labels: datos.dias,
+                    datasets: [{ label: 'Horas por día', data: datos.promedio_por_dia, backgroundColor: '#10b981' }]
+                },
+                options: { scales: { y: { beginAtZero: true, title: { display: true, text: 'Horas' } } } }
+            });
+        }
+
+        function cargar() {
+            fetch('/api/demanda/' + selector.value + '/')
+                .then(response => response.json())
+                .then(dibujar);
+        }
+
+        selector.addEventListener('change', cargar);
+        cargar();
+    });
+</script>
+{% endblock %}

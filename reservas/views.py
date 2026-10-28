@@ -1,4 +1,5 @@
 import json
+from functools import wraps
 from datetime import date, datetime, timedelta, time
 from django.shortcuts import render, get_object_or_404, redirect
 from django.http import JsonResponse
@@ -11,9 +12,12 @@ from django.utils.http import url_has_allowed_host_and_scheme
 from django.contrib.auth import authenticate, login, logout
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.contrib.auth.views import redirect_to_login
+from django.core.exceptions import PermissionDenied
 from .models import Resource, Booking, Availability, PaymentMethod
 from .disponibilidad import estado_dias, motivo_no_disponible
 from .pagos import precio_reserva, validar_tarjeta
+from .demanda import AJUSTE_PRECIO, UMBRAL_ALTO, UMBRAL_BAJO, VENTANA_MEDIA_MOVIL, datos_demanda
 
 
 # Horario por defecto (si no hay Availability definida)
@@ -25,6 +29,9 @@ MAX_DIAS_CONSULTA = 62
 
 # Máximo de semanas que se puede repetir una reserva
 MAX_SEMANAS_REPETICION = 12
+
+# Semanas hacia adelante que se muestran en la previsión de demanda
+SEMANAS_PREVISION = 4
 
 
 def calendario(request, resource_id):
@@ -235,6 +242,44 @@ def api_disponibilidad(request, resource_id):
         'resource_id': resource_id,
         'dias': estado_dias(resource_id, desde, hasta),
     })
+
+
+def staff_requerido(vista):
+    """Solo deja pasar a usuarios staff: quien no inició sesión va al login y los demás reciben 403."""
+    @wraps(vista)
+    def envoltura(request, *args, **kwargs):
+        if not request.user.is_authenticated:
+            return redirect_to_login(request.get_full_path())
+        if not request.user.is_staff:
+            raise PermissionDenied
+        return vista(request, *args, **kwargs)
+    return envoltura
+
+
+@staff_requerido
+def panel_demanda(request):
+    """
+    Panel para el administrador con gráficos de la demanda histórica y su previsión.
+    """
+    recursos = Resource.objects.order_by('name')
+    resumen = [datos_demanda(recurso) for recurso in recursos]
+    return render(request, 'reservas/demanda.html', {
+        'recursos': recursos,
+        'resumen': resumen,
+        'semanas_futuras': SEMANAS_PREVISION,
+        'ventana': VENTANA_MEDIA_MOVIL,
+        'umbral_alto': int(UMBRAL_ALTO * 100),
+        'umbral_bajo': int(UMBRAL_BAJO * 100),
+        'ajuste': int(AJUSTE_PRECIO * 100),
+    })
+
+
+def api_demanda(request, resource_id):
+    """Datos de demanda de un recurso en JSON. Solo para staff."""
+    if not (request.user.is_authenticated and request.user.is_staff):
+        return JsonResponse({'error': 'Solo el personal administrativo puede ver la demanda.'}, status=403)
+    recurso = get_object_or_404(Resource, id=resource_id)
+    return JsonResponse(datos_demanda(recurso, semanas_futuras=SEMANAS_PREVISION))
 
 
 @login_required

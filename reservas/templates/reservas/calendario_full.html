@@ -185,6 +185,7 @@
         <div class="nav-right">
             {% if is_authenticated %}
                 <a href="{% url 'mis_pagos' %}">Mis pagos</a>
+                {% if user.is_staff %}<a href="{% url 'panel_demanda' %}">Panel de demanda</a>{% endif %}
                 <span class="user-info">Hola, {{ user.username }}</span>
                 <a href="/logout/" class="btn-logout">Cerrar Sesión</a>
             {% else %}

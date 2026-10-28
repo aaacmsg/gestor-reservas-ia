@@ -15,6 +15,7 @@
             <a href="{% url 'home' %}" class="hover:underline">Inicio</a>
             {% if user.is_authenticated %}
                 <a href="{% url 'mis_pagos' %}" class="hover:underline">Mis pagos</a>
+                {% if user.is_staff %}<a href="{% url 'panel_demanda' %}" class="hover:underline">Panel de demanda</a>{% endif %}
                 <span>Hola, {{ user.username }}</span>
                 <a href="{% url 'logout' %}" class="bg-red-500 px-3 py-1 rounded hover:bg-red-600">Cerrar Sesión</a>
             {% else %}
@@ -23,7 +24,7 @@
         </div>
     </nav>
 
-    <main class="max-w-3xl mx-auto mt-8 px-4 pb-12">
+    <main class="{% block ancho %}max-w-3xl{% endblock %} mx-auto mt-8 px-4 pb-12">
         {% if messages %}
             {% for message in messages %}
                 <div class="mb-4 p-3 rounded {% if message.tags == 'error' %}bg-red-100 text-red-800{% else %}bg-green-100 text-green-800{% endif %}">
