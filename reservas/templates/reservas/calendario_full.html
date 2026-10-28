@@ -91,6 +91,32 @@
             margin-right: 10px;
             font-weight: 500;
         }
+
+        /* === LEYENDA DE DISPONIBILIDAD === */
+        .leyenda {
+            max-width: 1000px;
+            margin: 0 auto 10px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 16px;
+            justify-content: center;
+            font-size: 0.9rem;
+        }
+        .leyenda span::before {
+            content: "";
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            margin-right: 6px;
+            vertical-align: middle;
+            border-radius: 3px;
+            border: 1px solid #9ca3af;
+        }
+        .leyenda .libre::before { background: #bbf7d0; }
+        .leyenda .parcial::before { background: #fef08a; }
+        .leyenda .ocupado::before { background: #fecaca; }
+        .leyenda .reserva::before { background: #2563eb; }
+        .leyenda .bloqueo::before { background: #ef4444; }
     </style>
 </head>
 <body>
@@ -120,6 +146,14 @@
     <!-- Botón para actualizar eventos -->
     <button id="btn-refresh">🔄 Actualizar Reservas</button>
     
+    <div class="leyenda">
+        <span class="libre">Día libre</span>
+        <span class="parcial">Pocas franjas libres</span>
+        <span class="ocupado">Día ocupado</span>
+        <span class="reserva">Reserva</span>
+        <span class="bloqueo">Bloqueo del administrador</span>
+    </div>
+
     <!-- Contenedor del calendario con data-resource-id y user-logged -->
     <div id='calendar' 
          data-resource-id="{{ resource.id }}" 
@@ -128,58 +162,62 @@
 
     <script>
         document.addEventListener('DOMContentLoaded', function() {
-            console.log("=== INICIANDO FULLCALENDAR CON BLOQUEOS Y RESERVAS ===");
-
             const calendarElement = document.getElementById('calendar');
             const resourceId = calendarElement.dataset.resourceId;
             const userLogged = calendarElement.dataset.userLogged === "True";
 
-            // Datos de reservas y bloqueos enviados desde Django
-            const reservas = JSON.parse('{{ reservas_json|escapejs }}');
-            const bloqueos = JSON.parse('{{ bloqueos_json|escapejs }}');
+            // Colores de fondo de cada día según su disponibilidad
+            const COLORES_DIA = {
+                libre: '#bbf7d0',
+                parcial: '#fef08a',
+                ocupado: '#fecaca',
+                pasado: '#e5e7eb'
+            };
 
-            // Verifica si hay bloqueo del admin
-            function isBlocked(start, end) {
-                for (const b of bloqueos) {
-                    const bloqueadoStart = new Date(b.start);
-                    const bloqueadoEnd = new Date(b.end);
-                    if (start < bloqueadoEnd && end > bloqueadoStart) {
-                        return true;
-                    }
-                }
-                return false;
-            }
-
-            // Verifica si ya existe una reserva
-            function isReserved(start, end) {
-                for (const r of reservas) {
-                    const reservaStart = new Date(r.start);
-                    const reservaEnd = new Date(r.end);
-                    if (start < reservaEnd && end > reservaStart) {
-                        return true;
-                    }
-                }
-                return false;
+            // Una franja se puede elegir si no es pasada y no choca con reservas ni bloqueos.
+            // Se revisan los eventos que el calendario tiene cargados, que se refrescan solos.
+            function franjaLibre(start, end) {
+                if (start < new Date()) return false;
+                return !calendar.getEvents().some(ev =>
+                    ev.display !== 'background' &&
+                    ev.extendedProps.tipo &&
+                    start < ev.end && end > ev.start
+                );
             }
 
             var calendar = new FullCalendar.Calendar(calendarElement, {
-                initialView: 'timeGridWeek',
+                initialView: 'dayGridMonth',
                 locale: 'es',
+                headerToolbar: {
+                    left: 'prev,next today',
+                    center: 'title',
+                    right: 'dayGridMonth,timeGridWeek'
+                },
+                navLinks: true,
                 selectable: true,
                 slotMinTime: "09:00:00", // Horario inicial
                 slotMaxTime: "21:00:00", // Horario final
                 slotDuration: "01:00:00",
+                allDaySlot: false,
+                height: 'auto',
+                selectAllow: function(info) {
+                    // En la vista de mes se deja tocar el día; en la semana solo franjas libres
+                    if (info.allDay) return true;
+                    return franjaLibre(info.start, info.end);
+                },
                 select: function(info) {
-                    const start = new Date(info.startStr);
-                    const end = new Date(info.endStr);
-
-                    if (isBlocked(start, end)) {
-                        alert("Esta franja horaria está bloqueada por el administrador.");
+                    // En la vista de mes, al tocar un día se abre su semana para elegir la hora
+                    if (info.allDay) {
+                        calendar.unselect();
+                        calendar.changeView('timeGridWeek', info.startStr);
                         return;
                     }
 
-                    if (isReserved(start, end)) {
-                        alert("Ya existe una reserva en esta franja horaria.");
+                    const start = new Date(info.startStr);
+                    const end = new Date(info.endStr);
+
+                    if (!franjaLibre(start, end)) {
+                        alert("Esa franja no está disponible.");
                         return;
                     }
 
@@ -193,20 +231,47 @@
                     }
                 },
                 eventSources: [
-    {
-        url: '/api/reservas/{{ resource.id }}/',
-        method: 'GET',
-        failure: function() {
-            alert('Error cargando eventos!');
-        }
-    },
-    {
-        events: JSON.parse('{{ bloqueos_json|escapejs }}'),
-        color: '#ef4444',  // Bloqueos en rojo
-        textColor: '#fff'  // Texto en blanco
-    }
-]
-
+                    // Reservas existentes
+                    {
+                        url: '/api/reservas/{{ resource.id }}/',
+                        method: 'GET',
+                        failure: function() {
+                            alert('Error cargando eventos!');
+                        }
+                    },
+                    // Bloqueos del administrador
+                    {
+                        events: JSON.parse('{{ bloqueos_json|escapejs }}'),
+                        color: '#ef4444',  // Bloqueos en rojo
+                        textColor: '#fff'  // Texto en blanco
+                    },
+                    // Color de fondo de cada día según la API de disponibilidad
+                    {
+                        events: function(info, successCallback, failureCallback) {
+                            const params = new URLSearchParams({
+                                start: info.startStr.substring(0, 10),
+                                end: info.endStr.substring(0, 10)
+                            });
+                            fetch(`/api/disponibilidad/${resourceId}/?${params}`)
+                                .then(response => response.json())
+                                .then(data => {
+                                    // Se mandan dos fondos por día: uno de día completo para la vista
+                                    // de mes y otro con horas para la vista de semana
+                                    const fondos = [];
+                                    data.dias.forEach(dia => {
+                                        const inicio = new Date(dia.fecha + 'T00:00:00');
+                                        const fin = new Date(inicio);
+                                        fin.setDate(fin.getDate() + 1);
+                                        const color = COLORES_DIA[dia.estado];
+                                        fondos.push({ start: dia.fecha, allDay: true, display: 'background', color: color });
+                                        fondos.push({ start: inicio, end: fin, display: 'background', color: color });
+                                    });
+                                    successCallback(fondos);
+                                })
+                                .catch(failureCallback);
+                        }
+                    }
+                ]
             });
 
             calendar.render();
@@ -235,10 +300,11 @@
                 .then(data => {
                     if (data.success) {
                         alert(`Reserva(s) creada(s) correctamente: ${data.reservas.length} reserva(s).`);
-                        calendar.refetchEvents();
                     } else {
                         alert(data.error || 'Error al crear la reserva.');
                     }
+                    // Se recarga siempre para que los colores de los días queden al día
+                    calendar.refetchEvents();
                 })
                 .catch(error => console.error('Error:', error));
             }
