@@ -54,7 +54,7 @@ class Command(BaseCommand):
                     for hora in elegidas:
                         inicio = timezone.make_aware(datetime.combine(dia, time(hora)), zona)
                         fin = inicio + timedelta(hours=1)
-                        if Booking.objects.filter(resource=recurso, start_time__lt=fin, end_time__gt=inicio).exists():
+                        if Booking.objects.activas().filter(resource=recurso, start_time__lt=fin, end_time__gt=inicio).exists():
                             continue
                         Booking.objects.create(
                             user=usuario, resource=recurso, start_time=inicio, end_time=fin,

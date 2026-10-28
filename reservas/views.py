@@ -4,6 +4,7 @@ from datetime import date, datetime, timedelta, time
 from django.shortcuts import render, get_object_or_404, redirect
 from django.http import JsonResponse
 from django.views.decorators.csrf import ensure_csrf_cookie
+from django.views.decorators.http import require_POST
 from django.db import transaction
 from django.utils import timezone
 from django.utils.dateformat import format as date_format
@@ -44,7 +45,7 @@ def calendario(request, resource_id):
     inicio_semana = hoy - timedelta(days=hoy.weekday())  # Lunes
     dias_semana = [inicio_semana + timedelta(days=i) for i in range(7)]
 
-    reservas = Booking.objects.filter(
+    reservas = Booking.objects.activas().filter(
         resource=resource,
         start_time__date__gte=inicio_semana,
         start_time__date__lte=inicio_semana + timedelta(days=6)
@@ -78,7 +79,7 @@ def calendario_navegable(request, resource_id):
     inicio_semana = (hoy - timedelta(days=hoy.weekday())) + timedelta(days=delta)
     dias_semana = [inicio_semana + timedelta(days=i) for i in range(7)]
 
-    reservas = Booking.objects.filter(
+    reservas = Booking.objects.activas().filter(
         resource=resource,
         start_time__date__gte=inicio_semana,
         start_time__date__lte=inicio_semana + timedelta(days=6)
@@ -283,6 +284,44 @@ def api_demanda(request, resource_id):
 
 
 @login_required
+def mis_reservas(request):
+    """
+    Lista las reservas del usuario: las próximas (que se pueden cancelar) y el historial.
+    """
+    ahora = timezone.now()
+    reservas = Booking.objects.filter(user=request.user).select_related('resource')
+    proximas = reservas.activas().filter(start_time__gte=ahora).order_by('start_time')
+    historial = (
+        reservas.exclude(pk__in=proximas.values('pk')).order_by('-start_time')
+    )
+    return render(request, 'reservas/mis_reservas.html', {
+        'proximas': proximas,
+        'historial': historial,
+    })
+
+
+@login_required
+@require_POST
+def cancelar_reserva(request, booking_id):
+    """
+    Cancela una reserva propia que todavía no empezó. La franja queda libre otra vez.
+    """
+    reserva = get_object_or_404(Booking, id=booking_id)
+    if reserva.user_id != request.user.id:
+        raise PermissionDenied
+    if reserva.status == Booking.CANCELADA:
+        messages.error(request, 'Esa reserva ya estaba cancelada.')
+    elif reserva.start_time <= timezone.now():
+        messages.error(request, 'No se puede cancelar una reserva que ya empezó o ya pasó.')
+    else:
+        reserva.status = Booking.CANCELADA
+        reserva.cancelled_at = timezone.now()
+        reserva.save(update_fields=['status', 'cancelled_at'])
+        messages.success(request, 'La reserva se canceló y la franja quedó libre.')
+    return redirect('mis_reservas')
+
+
+@login_required
 def mis_pagos(request):
     """
     Página donde el usuario guarda o elimina su método de pago.
@@ -344,7 +383,7 @@ def api_reservas(request, resource_id):
     """
     API que devuelve todas las reservas de un recurso en formato JSON.
     """
-    reservas = Booking.objects.filter(resource_id=resource_id).order_by('start_time')
+    reservas = Booking.objects.activas().filter(resource_id=resource_id).order_by('start_time')
     eventos = [
         {
             "title": f"Reservado por {reserva.user.username}",

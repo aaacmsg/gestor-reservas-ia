@@ -32,7 +32,7 @@ def inicio_del_dia(dia):
 
 def horas_reservadas(resource_id, desde, hasta):
     """Devuelve (fecha local, horas) de cada reserva que empieza entre dos fechas."""
-    reservas = Booking.objects.filter(
+    reservas = Booking.objects.activas().filter(
         resource_id=resource_id,
         start_time__gte=inicio_del_dia(desde),
         start_time__lt=inicio_del_dia(hasta),
