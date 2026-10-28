@@ -2,13 +2,15 @@ import json
 from datetime import date, datetime, timedelta, time
 from django.shortcuts import render, get_object_or_404, redirect
 from django.http import JsonResponse
-from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.csrf import ensure_csrf_cookie
+from django.db import transaction
+from django.utils import timezone
 from django.utils.dateformat import format as date_format
 from django.utils.dateparse import parse_datetime
 from django.contrib.auth import authenticate, login, logout
 from django.contrib import messages
 from .models import Resource, Booking, Availability
-from .disponibilidad import estado_dias
+from .disponibilidad import estado_dias, motivo_no_disponible
 
 
 # Horario por defecto (si no hay Availability definida)
@@ -17,6 +19,9 @@ DEFAULT_END = time(21, 0)    # 21:00
 
 # Máximo de días que se pueden consultar de una sola vez en la API de disponibilidad
 MAX_DIAS_CONSULTA = 62
+
+# Máximo de semanas que se puede repetir una reserva
+MAX_SEMANAS_REPETICION = 12
 
 
 def calendario(request, resource_id):
@@ -81,6 +86,7 @@ def calendario_navegable(request, resource_id):
     })
 
 
+@ensure_csrf_cookie
 def calendario_full(request, resource_id):
     """
     Calendario interactivo con FullCalendar.
@@ -119,53 +125,65 @@ def calendario_full(request, resource_id):
 
 
 
-@csrf_exempt
 def api_crear_reserva(request):
     """
     Endpoint para crear una nueva reserva, con soporte para repeticiones semanales.
+    Primero se valida cada semana y solo si todas están libres se crean las reservas.
     """
-    if request.method == 'POST':
-        if not request.user.is_authenticated:
-            return JsonResponse({'success': False, 'error': 'Debes iniciar sesión para reservar.'}, status=403)
-        try:
-            data = json.loads(request.body)
-            resource_id = data.get('resource_id')
-            start_time = parse_datetime(data.get('start_time'))
-            end_time = parse_datetime(data.get('end_time'))
-            repeat_weeks = int(data.get('repeat_weeks', 0))
+    if request.method != 'POST':
+        return JsonResponse({'success': False, 'error': 'Método no permitido'}, status=405)
+    if not request.user.is_authenticated:
+        return JsonResponse({'success': False, 'error': 'Debes iniciar sesión para reservar.'}, status=403)
 
-            reservas_creadas = []
+    try:
+        data = json.loads(request.body)
+        resource_id = int(data.get('resource_id'))
+        start_time = parse_datetime(data.get('start_time') or '')
+        end_time = parse_datetime(data.get('end_time') or '')
+        repeat_weeks = int(data.get('repeat_weeks', 0))
+    except (ValueError, TypeError):
+        return JsonResponse({'success': False, 'error': 'Datos de reserva no válidos.'}, status=400)
 
-            for i in range(repeat_weeks + 1):
-                start = start_time + timedelta(weeks=i)
-                end = end_time + timedelta(weeks=i)
+    if start_time is None or end_time is None:
+        return JsonResponse({'success': False, 'error': 'Fechas de reserva no válidas.'}, status=400)
+    if not Resource.objects.filter(id=resource_id).exists():
+        return JsonResponse({'success': False, 'error': 'El recurso no existe.'}, status=404)
+    if not 0 <= repeat_weeks <= MAX_SEMANAS_REPETICION:
+        return JsonResponse({
+            'success': False,
+            'error': f'Las semanas a repetir deben estar entre 0 y {MAX_SEMANAS_REPETICION}.'
+        }, status=400)
 
-                overlapping = Booking.objects.filter(
-                    resource_id=resource_id,
-                    start_time__lt=end,
-                    end_time__gt=start
-                )
-                if overlapping.exists():
-                    return JsonResponse({
-                        'success': False,
-                        'error': f'Conflicto: hay una reserva en la semana {i + 1} ({start}).'
-                    })
+    if timezone.is_naive(start_time):
+        start_time = timezone.make_aware(start_time)
+    if timezone.is_naive(end_time):
+        end_time = timezone.make_aware(end_time)
 
-                booking = Booking.objects.create(
-                    user=request.user,
-                    resource_id=resource_id,
-                    start_time=start,
-                    end_time=end
-                )
-                reservas_creadas.append({
-                    'start': start.isoformat(),
-                    'end': end.isoformat()
-                })
+    franjas = [
+        (start_time + timedelta(weeks=i), end_time + timedelta(weeks=i))
+        for i in range(repeat_weeks + 1)
+    ]
 
-            return JsonResponse({'success': True, 'reservas': reservas_creadas})
-        except Exception as e:
-            return JsonResponse({'success': False, 'error': str(e)})
-    return JsonResponse({'success': False, 'error': 'Método no permitido'}, status=405)
+    for i, (inicio, fin) in enumerate(franjas):
+        motivo = motivo_no_disponible(resource_id, inicio, fin)
+        if motivo:
+            if repeat_weeks:
+                motivo = f'Semana {i + 1} ({timezone.localtime(inicio):%d/%m/%Y %H:%M}): {motivo}'
+            return JsonResponse({'success': False, 'error': motivo}, status=409)
+
+    with transaction.atomic():
+        for inicio, fin in franjas:
+            Booking.objects.create(
+                user=request.user,
+                resource_id=resource_id,
+                start_time=inicio,
+                end_time=fin
+            )
+
+    return JsonResponse({
+        'success': True,
+        'reservas': [{'start': i.isoformat(), 'end': f.isoformat()} for i, f in franjas]
+    })
 
 
 def api_disponibilidad(request, resource_id):
